@@ -1,16 +1,31 @@
 from flask import Flask, request, render_template_string
 import re
+import ply.lex as lex
 
 app = Flask(__name__)
 
-# Definición de tokens para el analizador léxico
-tokens = {
-    'PR': r'\b(for|if|else|while|return)\b',
-    'ID': r'\b[a-zA-Z_][a-zA-Z_0-9]*\b',
-    'NUM': r'\b\d+\b',
-    'SYM': r'[;{}()\[\]=<>!+-/*]',
-    'ERR': r'.'
-}
+# Definición de tokens para el analizador léxico con PLY
+tokens = ('PR', 'ID', 'NUM', 'SYM', 'ERR')
+
+t_PR = r'\b(for|if|else|while|return)\b'
+t_ID = r'\b[a-zA-Z_][a-zA-Z_0-9]*\b'
+t_NUM = r'\b\d+\b'
+t_SYM = r'[;{}()\[\]=<>!+-/*]'
+t_ERR = r'.'
+
+# Ignorar espacios y tabulaciones
+t_ignore = ' \t'
+
+def t_newline(t):
+    r'\n+'
+    t.lexer.lineno += len(t.value)
+
+def t_error(t):
+    t.type = 'ERR'
+    t.lexer.skip(1)
+    return t
+
+lexer = lex.lex()
 
 # Plantilla HTML para mostrar resultados
 html_template = '''
@@ -121,25 +136,25 @@ html_template = '''
         </tr>
       </table>
       <h2>Código Corregido</h2>
-      <pre>for (int i = 1; i <= 19; i++) {
-    System.out.println("hola");
-}
-</pre>
+      <pre>{{ corrected_code }}</pre>
     </div>
   </body>
 </html>
-
 '''
 
 def analyze_lexical(code):
+    lexer.input(code)
     results = {'PR': 0, 'ID': 0, 'NUM': 0, 'SYM': 0, 'ERR': 0}
     rows = []
     for line in code.split('\n'):
         row = [''] * 6
-        for token_name, token_pattern in tokens.items():
-            for match in re.findall(token_pattern, line):
-                results[token_name] += 1
-                row[list(tokens.keys()).index(token_name)] = 'x'
+        lexer.input(line)
+        while True:
+            tok = lexer.token()
+            if not tok:
+                break
+            results[tok.type] += 1
+            row[list(tokens).index(tok.type)] = 'x'
         rows.append(row)
     return rows, results
 
