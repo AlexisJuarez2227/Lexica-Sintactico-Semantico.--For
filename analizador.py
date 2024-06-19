@@ -1,31 +1,16 @@
 from flask import Flask, request, render_template_string
 import re
-import ply.lex as lex
 
 app = Flask(__name__)
 
-# Definición de tokens para el analizador léxico con PLY
-tokens = ('PR', 'ID', 'NUM', 'SYM', 'ERR')
-
-t_PR = r'\b(for|if|else|while|return)\b'
-t_ID = r'\b[a-zA-Z_][a-zA-Z_0-9]*\b'
-t_NUM = r'\b\d+\b'
-t_SYM = r'[;{}()\[\]=<>!+-/*]'
-t_ERR = r'.'
-
-# Ignorar espacios y tabulaciones
-t_ignore = ' \t'
-
-def t_newline(t):
-    r'\n+'
-    t.lexer.lineno += len(t.value)
-
-def t_error(t):
-    t.type = 'ERR'
-    t.lexer.skip(1)
-    return t
-
-lexer = lex.lex()
+# Definición de tokens para el analizador léxico
+tokens = {
+    'PR': r'\b(int|for|if|else|while|return|System|out|println)\b',
+    'ID': r'\b[a-zA-Z_][a-zA-Z_0-9]*\b',
+    'NUM': r'\b\d+\b',
+    'SYM': r'[;{}()\[\]=<>!+-/*]',
+    'ERR': r'.'
+}
 
 # Plantilla HTML para mostrar resultados
 html_template = '''
@@ -143,65 +128,64 @@ html_template = '''
 '''
 
 def analyze_lexical(code):
-    lexer.input(code)
     results = {'PR': 0, 'ID': 0, 'NUM': 0, 'SYM': 0, 'ERR': 0}
     rows = []
     for line in code.split('\n'):
         row = [''] * 6
-        lexer.input(line)
-        while True:
-            tok = lexer.token()
-            if not tok:
-                break
-            results[tok.type] += 1
-            row[list(tokens).index(tok.type)] = 'x'
+        for token_name, token_pattern in tokens.items():
+            for match in re.findall(token_pattern, line):
+                results[token_name] += 1
+                row[list(tokens.keys()).index(token_name)] = 'x'
         rows.append(row)
     return rows, results
 
-def correct_syntactic(code):
-    # Corrección sintáctica del bucle 'for'
-    corrected_code = re.sub(r'\bfor\s*\(\s*.*\s*\)\s*\{', r'for (int i = 1; i <= 19; i++) {', code)
-    corrected_code = re.sub(r'\{.*\}', r'{\n    System.out.println("hola");\n}', corrected_code, flags=re.DOTALL)
-    return corrected_code
-
-def correct_semantic(code):
-    # Corrección semántica del uso de 'System.out.println'
-    corrected_code = re.sub(r'\bSystem\.out\.println\s*\(.*\)\s*;', r'System.out.println("hola");', code)
-    return corrected_code
-
 def analyze_syntactic(code):
-    # Análisis sintáctico y corrección simplificada
-    corrected_code = code
     errors = []
+    corrected_code = code
 
     # Verificar estructura general del bucle 'for'
-    if not re.search(r'\bfor\s*\(\s*int\s+\w+\s*=\s*\d+\s*;\s*\w+\s*<=\s*\d+\s*;\s*\w+\+\+\s*\)\s*\{', code):
+    if not re.search(r'\bfor\s*\(\s*\w+\s*=\s*\d+\s*;\s*\w+\s*<=\s*\d+\s*;\s*\w+\+\+\s*\)\s*\{', code):
         errors.append("Error en la sintaxis del bucle 'for'. Asegúrate de declarar el tipo de variable correctamente, por ejemplo: 'for (int i = 1; i <= 19; i++) {'.")
-        corrected_code = correct_syntactic(corrected_code)
-
-    # Verificar saltos de línea y llaves
-    if not re.search(r'\{\s*\n\s*System\.out\.println\s*\(\s*".*"\s*\)\s*;\s*\n\s*\}', code):
+    
+    # Verificar el uso correcto de 'System.out.println()' en el cuerpo del bucle 'for'
+    if not re.search(r'\{\s*\n\s*System\.out\.println\s*\(\s*\w+\s*\)\s*;\s*\n\s*\}', code):
         errors.append("Error en el cuerpo del bucle 'for'. Asegúrate de usar 'System.out.println()' correctamente y de que las llaves estén bien colocadas.")
-        corrected_code = correct_syntactic(corrected_code)
-
+    
     if not errors:
         return "Sintaxis correcta", corrected_code
     else:
         return " ".join(errors), corrected_code
 
 def analyze_semantic(code):
-    # Análisis semántico simplificado
     errors = []
-    if not re.search(r'\bSystem\.out\.println\s*\(\s*".*"\s*\)\s*;', code):
-        errors.append("Error semántico en System.out.println. Asegúrate de usar 'System.out.println()' correctamente con comillas dobles para las cadenas.")
-        corrected_code = correct_semantic(code)
-    else:
-        corrected_code = code
+    declared_variables = set()
+    used_variables = set()
+
+    # Buscar todas las declaraciones de variables
+    for var_declaration in re.findall(r'\bint\s+(\w+)\s*(=\s*\d+)?\s*;', code):
+        declared_variables.add(var_declaration[0])
+    
+    # Buscar variables declaradas en el bucle for
+    for var_declaration in re.findall(r'\bfor\s*\(\s*int\s+(\w+)\s*=\s*\d+\s*;', code):
+        declared_variables.add(var_declaration)
+    
+    # Agregar variables usadas dentro del código
+    used_variables.update(re.findall(r'\b(\w+)\b', code))
+
+    # Variables estándar de Java que no deben ser marcadas como no declaradas
+    standard_keywords = {'System', 'out', 'println', 'for', 'if', 'else', 'while', 'return', 'int'}
+
+    # Identificar variables usadas pero no declaradas
+    undeclared_variables = used_variables - declared_variables - standard_keywords
+
+    for var in undeclared_variables:
+        if not re.match(r'^\d+$', var):  # Ignorar números
+            errors.append(f"Variable no declarada: '{var}'.")
 
     if not errors:
-        return "Uso correcto de System.out.println", corrected_code
+        return "Uso correcto de las estructuras semánticas", code
     else:
-        return " ".join(errors), corrected_code
+        return " ".join(errors), code
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
